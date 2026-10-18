@@ -1,31 +1,24 @@
 name: Terraform Azure - Aula 10
-
 on:
   push:
     branches:
       - main
-    paths:
-      - "**.tf"
-      - ".github/workflows/terraform.yml"
-      - "terraform.tfvars.example"
-      - ".terraform.lock.hcl"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "**.tf"
-      - ".github/workflows/terraform.yml"
-      - "terraform.tfvars.example"
-      - ".terraform.lock.hcl"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  validate:
-    name: Validar Terraform
+  terraform:
+    name: Validar e aplicar infraestrutura
     runs-on: ubuntu-latest
+
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
     steps:
       - name: Baixar repositório
@@ -33,14 +26,39 @@ jobs:
 
       - name: Instalar Terraform
         uses: hashicorp/setup-terraform@v3
+
+      - name: Instalar Azure CLI
+        uses: azure/CLI@v2
         with:
-          terraform_version: 1.9.8
+          azcliversion: latest
+          inlineScript: |
+            az login --service-principal \
+              --username "$ARM_CLIENT_ID" \
+              --password "$ARM_CLIENT_SECRET" \
+              --tenant "$ARM_TENANT_ID"
+
+            az account set --subscription "$ARM_SUBSCRIPTION_ID"
+
+      - name: Inicializar Terraform
+        run: terraform init
 
       - name: Verificar formatação
         run: terraform fmt -check -recursive
 
-      - name: Inicializar Terraform
-        run: terraform init -backend=false
-
       - name: Validar configuração
         run: terraform validate
+
+      - name: Importar grupo existente, se necessário
+        shell: bash
+        run: |
+          if az group show --name rg-terraform-aula10 >/dev/null 2>&1; then
+            terraform import \
+              azurerm_resource_group.main \
+              "/subscriptions/$ARM_SUBSCRIPTION_ID/resourceGroups/rg-terraform-aula10"
+          fi
+
+      - name: Planejar infraestrutura
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Aplicar infraestrutura
+        run: terraform apply -input=false -auto-approve tfplan
