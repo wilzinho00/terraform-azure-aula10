@@ -1,0 +1,27 @@
+# Terraform working directory
+.terraform/
+
+# Terraform state and plans
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Local variable files may contain secrets
+*.tfvars
+!terraform.tfvars.example
+
+# Dependency lock file should normally be committed
+# .terraform.lock.hcl
+
+# Credentials and local environment files
+.env
+.env.*
+*.pem
+*.key
+
+# Editor and operating system files
+.vscode/
+.DS_Store
+Thumbs.db

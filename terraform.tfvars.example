@@ -1,0 +1,8 @@
+subscription_id    = "00000000-0000-0000-0000-000000000000"
+resource_group_name = "rg-terraform-aula10"
+location            = "eastus"
+
+tags = {
+  environment = "learning"
+  managed_by  = "terraform"
+}

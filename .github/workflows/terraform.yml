@@ -1,0 +1,39 @@
+name: Terraform
+
+on:
+  push:
+    paths:
+      - "**.tf"
+      - ".github/workflows/terraform.yml"
+      - "terraform.tfvars.example"
+  pull_request:
+    paths:
+      - "**.tf"
+      - ".github/workflows/terraform.yml"
+      - "terraform.tfvars.example"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Format and validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      - name: Initialize without backend
+        run: terraform init -backend=false
+
+      - name: Validate configuration
+        run: terraform validate
