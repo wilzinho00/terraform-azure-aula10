@@ -1,4 +1,5 @@
 name: Terraform Azure - Aula 10
+
 on:
   push:
     branches:
@@ -27,17 +28,16 @@ jobs:
       - name: Instalar Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Instalar Azure CLI
-        uses: azure/CLI@v2
+      - name: Autenticar na Azure
+        uses: azure/login@v2
         with:
-          azcliversion: latest
-          inlineScript: |
-            az login --service-principal \
-              --username "$ARM_CLIENT_ID" \
-              --password "$ARM_CLIENT_SECRET" \
-              --tenant "$ARM_TENANT_ID"
-
-            az account set --subscription "$ARM_SUBSCRIPTION_ID"
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
 
       - name: Inicializar Terraform
         run: terraform init
@@ -48,10 +48,13 @@ jobs:
       - name: Validar configuração
         run: terraform validate
 
-      - name: Importar grupo existente, se necessário
+      - name: Importar grupo existente
         shell: bash
         run: |
-          if az group show --name rg-terraform-aula10 >/dev/null 2>&1; then
+          if az group show \
+            --name rg-terraform-aula10 \
+            --output none 2>/dev/null; then
+
             terraform import \
               azurerm_resource_group.main \
               "/subscriptions/$ARM_SUBSCRIPTION_ID/resourceGroups/rg-terraform-aula10"
