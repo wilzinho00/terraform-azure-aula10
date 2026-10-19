@@ -4,14 +4,29 @@ on:
   push:
     branches:
       - main
+
+  pull_request:
+    branches:
+      - main
+
   workflow_dispatch:
+    inputs:
+      apply:
+        description: Aplicar as mudanças na assinatura Azure
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: terraform-azure-aula10
+  cancel-in-progress: false
+
 jobs:
   terraform:
-    name: Validar e aplicar infraestrutura
+    name: Validar e, se solicitado, aplicar
     runs-on: ubuntu-latest
 
     env:
@@ -19,7 +34,9 @@ jobs:
       ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_resource_group_name: ${{ vars.TF_RESOURCE_GROUP_NAME || 'rg-terraform-aula10' }}
 
     steps:
       - name: Baixar repositório
@@ -27,41 +44,105 @@ jobs:
 
       - name: Instalar Terraform
         uses: hashicorp/setup-terraform@v3
-
-      - name: Autenticar na Azure
-        uses: azure/login@v2
         with:
-          creds: |
-            {
-              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
-              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
-              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
-            }
-
-      - name: Inicializar Terraform
-        run: terraform init
+          terraform_version: 1.9.8
 
       - name: Verificar formatação
         run: terraform fmt -check -recursive
 
+      - name: Inicializar Terraform para validação
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.apply }}
+        run: terraform init -backend=false -input=false
+
+      - name: Inicializar Terraform para aplicação
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.apply }}
+        run: terraform init -input=false
+
       - name: Validar configuração
         run: terraform validate
 
-      - name: Importar grupo existente
+      - name: Verificar autorização para aplicar
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.apply }}
         shell: bash
         run: |
-          if az group show \
-            --name rg-terraform-aula10 \
-            --output none 2>/dev/null; then
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::A aplicação da infraestrutura só é permitida na branch main."
+            exit 1
+          fi
+
+          for secret_name in \
+            ARM_CLIENT_ID \
+            ARM_CLIENT_SECRET \
+            ARM_TENANT_ID \
+            ARM_SUBSCRIPTION_ID; do
+
+            if [[ -z "${!secret_name:-}" ]]; then
+              echo "::error::O segredo necessário para $secret_name não está configurado."
+              exit 1
+            fi
+          done
+
+          echo "Verificação dos segredos concluída."
+
+      - name: Autenticar na Azure
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.apply }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          az login \
+            --service-principal \
+            --username "$ARM_CLIENT_ID" \
+            --password "$ARM_CLIENT_SECRET" \
+            --tenant "$ARM_TENANT_ID" \
+            --output none
+
+          az account set \
+            --subscription "$ARM_SUBSCRIPTION_ID"
+
+          echo "Autenticação na Azure concluída."
+
+      - name: Importar Resource Group existente, se necessário
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.apply }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          resource_group_id="/subscriptions/${ARM_SUBSCRIPTION_ID}/resourceGroups/${TF_VAR_resource_group_name}"
+
+          state_resources="$(terraform state list 2>/dev/null || true)"
+
+          if grep -Fxq "azurerm_resource_group.main" <<< "$state_resources"; then
+            echo "Resource Group já está no estado do Terraform."
+            exit 0
+          fi
+
+          group_exists="$(az group exists \
+            --name "$TF_VAR_resource_group_name" \
+            --output tsv)"
+
+          if [[ "$group_exists" == "true" ]]; then
+            echo "Importando Resource Group existente..."
 
             terraform import \
+              -input=false \
               azurerm_resource_group.main \
-              "/subscriptions/$ARM_SUBSCRIPTION_ID/resourceGroups/rg-terraform-aula10"
+              "$resource_group_id"
+
+          elif [[ "$group_exists" == "false" ]]; then
+            echo "Resource Group não existe. O Terraform poderá criá-lo."
+
+          else
+            echo "::error::Resposta inesperada ao consultar o Resource Group."
+            exit 1
           fi
 
       - name: Planejar infraestrutura
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.apply }}
         run: terraform plan -input=false -out=tfplan
 
       - name: Aplicar infraestrutura
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.apply }}
         run: terraform apply -input=false -auto-approve tfplan
